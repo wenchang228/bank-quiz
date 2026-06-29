@@ -110,14 +110,12 @@
 
             // 網頁開啟時的安全檢查
             useEffect(() => {
-                // 如果是本地雙擊開啟 (file://)，為了避免瀏覽器安全機制導致腳本崩潰，直接跳過自動讀取
                 if (window.location.protocol === 'file:') {
                     setErrorMsg("【本地模式說明】受限於瀏覽器安全機制，直接雙擊 HTML 檔案時無法自動讀取同目錄下的 all.xlsx。請點擊下方按鈕手動上傳。若要啟用自動讀取與 iPhone 支援，請將檔案放上 GitHub Pages 環境。");
                     setIsLoading(false);
                     return;
                 }
 
-                // 如果是在伺服器環境 (如 GitHub Pages)，則安全執行自動讀取
                 const autoLoadExcel = async () => {
                     try {
                         const response = await fetch('all.xlsx');
@@ -140,7 +138,6 @@
                 autoLoadExcel();
             }, []);
 
-            // 備用的手動上傳功能
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -166,7 +163,9 @@
             const startQuiz = () => {
                 const filtered = rawData.filter(item => item.subjectCategory === config.subject);
                 const shuffled = [...filtered].sort(() => 0.5 - Math.random());
-                const selected = shuffled.slice(0, Math.min(config.questionCount, filtered.length));
+                // 防呆：如果按下開始時輸入框是空的，預設為10題
+                const count = parseInt(config.questionCount) || 10;
+                const selected = shuffled.slice(0, Math.min(count, filtered.length));
                 setQuizData(selected);
                 setCurrentIndex(0);
                 setUserAnswers(new Array(selected.length).fill(undefined));
@@ -194,6 +193,9 @@
                 setScore(Math.round((correctCount / quizData.length) * 100));
                 setGameState('RESULT');
             };
+
+            // 取得目前選擇考科的最大題數
+            const currentSubjectMax = rawData.filter(item => item.subjectCategory === config.subject).length;
 
             return (
                 <div className="min-h-screen p-4 md:p-8 flex flex-col items-center justify-start max-w-md mx-auto sm:max-w-2xl">
@@ -249,14 +251,31 @@
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-600 mb-2">
-                                        測驗題數 (該科總共 {rawData.filter(item => item.subjectCategory === config.subject).length} 題)
+                                        測驗題數 (該科總共 {currentSubjectMax} 題)
                                     </label>
                                     <input 
                                         type="number" 
                                         value={config.questionCount}
-                                        onChange={(e) => setConfig({...config, questionCount: parseInt(e.target.value) || 10})}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val === '') {
+                                                setConfig({...config, questionCount: ''}); // 允許暫時清空
+                                            } else {
+                                                let num = parseInt(val, 10);
+                                                if (num > currentSubjectMax) num = currentSubjectMax; // 自動限制上限
+                                                setConfig({...config, questionCount: num});
+                                            }
+                                        }}
+                                        onBlur={(e) => {
+                                            // 離開輸入框時防呆檢查
+                                            let num = parseInt(e.target.value, 10);
+                                            if (isNaN(num) || num < 1) {
+                                                setConfig({...config, questionCount: 1});
+                                            }
+                                        }}
                                         className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-lg"
                                         min="1"
+                                        max={currentSubjectMax}
                                     />
                                 </div>
                                 <button 
