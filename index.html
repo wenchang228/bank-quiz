@@ -1,429 +1,456 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>銀行內控考古題系統</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght=400;500;700&display=swap');
-        body { 
-            font-family: 'Noto+Sans+TC', sans-serif; 
-            background-color: #f3f4f6;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .glass-morphism {
-            background: rgba(255, 255, 255, 0.98);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-    </style>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="Content-Style-Type" content="text/css">
+  <title></title>
+  <meta name="Generator" content="Cocoa HTML Writer">
+  <meta name="CocoaVersion" content="2685.3">
+  <style type="text/css">
+    p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; font: 17.0px '.SF NS'}
+    p.p2 {margin: 0.0px 0.0px 0.0px 0.0px; font: 17.0px '.SF NS'; min-height: 20.0px}
+  </style>
 </head>
 <body>
-    <div id="root"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        function App() {
-            const [rawData, setRawData] = useState([]);
-            const [subjects, setSubjects] = useState([]);
-            const [gameState, setGameState] = useState('UPLOAD'); // UPLOAD, CONFIG, QUIZ, RESULT
-            
-            const [config, setConfig] = useState({
-                subject: '',
-                questionCount: 10
-            });
-
-            const [quizData, setQuizData] = useState([]);
-            const [currentIndex, setCurrentIndex] = useState(0);
-            const [userAnswers, setUserAnswers] = useState([]);
-            const [score, setScore] = useState(null);
-            const [errorMsg, setErrorMsg] = useState(null);
-            const [isLoading, setIsLoading] = useState(true);
-
-            // 核心資料解析與處理邏輯
-            const processExcelData = (data) => {
-                try {
-                    const processedData = data.map(item => {
-                        let cat = '其他';
-                        const rawSubject = item['期別/科目'] || item['考科'] || '';
-                        if (rawSubject.includes('法規')) cat = '法規';
-                        else if (rawSubject.includes('實務')) cat = '實務';
-
-                        let parsedOptions = [];
-                        if (item['選項']) {
-                            const rawOptions = item['選項'].toString();
-                            const regex = /\((\d)\)\s*([^]*?)(?=\(\d\)|$)/g;
-                            const matches = [...rawOptions.matchAll(regex)];
-
-                            if (matches.length > 0) {
-                                parsedOptions = matches.map(m => ({ id: m[1], text: m[2].trim(), raw: m[0].trim() }));
-                            } else {
-                                const opts = rawOptions.split('\n').filter(o => o.trim() !== '');
-                                parsedOptions = opts.map(opt => {
-                                    const match = opt.match(/^\((\d)\)\s*(.*)/);
-                                    if (match) return { id: match[1], text: match[2], raw: opt };
-                                    return { id: opt, text: opt, raw: opt };
-                                });
-                            }
-                        } else {
-                            ['A', 'B', 'C', 'D'].forEach(label => {
-                                if (item[`選項${label}`] || item[label]) {
-                                    parsedOptions.push({ id: label, text: item[`選項${label}`] || item[label], raw: label });
-                                }
-                            });
-                        }
-
-                        return {
-                            ...item,
-                            subjectCategory: cat,
-                            parsedOptions: parsedOptions,
-                            correctAnswerId: item['正確答案'] ? item['正確答案'].toString().trim() : (item['Answer'] ? item['Answer'].toString().trim() : '')
-                        };
-                    }).filter(item => item.subjectCategory !== '其他');
-
-                    if (processedData.length === 0) {
-                        setErrorMsg("找不到「法規」或「實務」相關考題，請檢查 Excel 內容。");
-                        setIsLoading(false);
-                        return false;
-                    }
-
-                    const availableSubjects = [...new Set(processedData.map(item => item.subjectCategory))];
-                    setRawData(processedData);
-                    setSubjects(availableSubjects);
-                    setConfig(prev => ({ ...prev, subject: availableSubjects[0] }));
-                    setGameState('CONFIG');
-                    setErrorMsg(null);
-                    setIsLoading(false);
-                    return true;
-                } catch (e) {
-                    setErrorMsg("解析 Excel 資料時發生錯誤，請確認欄位格式。");
-                    setIsLoading(false);
-                    return false;
-                }
-            };
-
-            // 網頁開啟時的安全檢查
-            useEffect(() => {
-                if (window.location.protocol === 'file:') {
-                    setErrorMsg("【本地模式說明】受限於瀏覽器安全機制，直接雙擊 HTML 檔案時無法自動讀取同目錄下的 all.xlsx。請點擊下方按鈕手動上傳。若要啟用自動讀取與 iPhone 支援，請將檔案放上 GitHub Pages 環境。");
-                    setIsLoading(false);
-                    return;
-                }
-
-                const autoLoadExcel = async () => {
-                    try {
-                        const response = await fetch('all.xlsx');
-                        if (!response.ok) {
-                            throw new Error(`找不到檔案 (HTTP ${response.status})`);
-                        }
-                        const arrayBuffer = await response.arrayBuffer();
-                        const wb = XLSX.read(arrayBuffer, { type: 'array' });
-                        const wsname = wb.SheetNames[0];
-                        const ws = wb.Sheets[wsname];
-                        const data = XLSX.utils.sheet_to_json(ws);
-                        
-                        processExcelData(data);
-                    } catch (error) {
-                        setErrorMsg("錯誤：在伺服器目錄下找不到 all.xlsx 檔案，請確認檔案名稱與位置是否正確。");
-                        setIsLoading(false);
-                    }
-                };
-
-                autoLoadExcel();
-            }, []);
-
-            const handleFileUpload = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                setIsLoading(true);
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                    try {
-                        const bstr = evt.target.result;
-                        const wb = XLSX.read(bstr, { type: 'binary' });
-                        const wsname = wb.SheetNames[0];
-                        const ws = wb.Sheets[wsname];
-                        const data = XLSX.utils.sheet_to_json(ws);
-                        processExcelData(data);
-                    } catch (err) {
-                        setErrorMsg("檔案讀取失敗，請確認是否為標準 Excel 檔案。");
-                        setIsLoading(false);
-                    }
-                };
-                reader.readAsBinaryString(file);
-            };
-
-            const startQuiz = () => {
-                const filtered = rawData.filter(item => item.subjectCategory === config.subject);
-                const shuffled = [...filtered].sort(() => 0.5 - Math.random());
-                // 防呆：如果按下開始時輸入框是空的，預設為10題
-                const count = parseInt(config.questionCount) || 10;
-                const selected = shuffled.slice(0, Math.min(count, filtered.length));
-                setQuizData(selected);
-                setCurrentIndex(0);
-                setUserAnswers(new Array(selected.length).fill(undefined));
-                setGameState('QUIZ');
-            };
-
-            const handleAnswer = (optionId) => {
-                if (userAnswers[currentIndex] !== undefined) return;
-                const updatedAnswers = [...userAnswers];
-                updatedAnswers[currentIndex] = optionId;
-                setUserAnswers(updatedAnswers);
-                setTimeout(() => {
-                    setCurrentIndex(prev => prev < quizData.length - 1 ? prev + 1 : prev);
-                }, 800);
-            };
-
-            const goPrev = () => { if (currentIndex > 0) setCurrentIndex(currentIndex - 1); };
-            const goNext = () => { if (currentIndex < quizData.length - 1) setCurrentIndex(currentIndex + 1); };
-            const returnToMenu = () => setGameState('CONFIG');
-            const calculateResult = () => {
-                let correctCount = 0;
-                quizData.forEach((q, idx) => {
-                    if ((userAnswers[idx] || "").toString().trim() === q.correctAnswerId) correctCount++;
-                });
-                setScore(Math.round((correctCount / quizData.length) * 100));
-                setGameState('RESULT');
-            };
-
-            // 取得目前選擇考科的最大題數
-            const currentSubjectMax = rawData.filter(item => item.subjectCategory === config.subject).length;
-
-            return (
-                <div className="min-h-screen p-4 md:p-8 flex flex-col items-center justify-start max-w-md mx-auto sm:max-w-2xl">
-                    <header className="mb-6 text-center w-full">
-                        <h1 className="text-2xl md:text-3xl font-bold text-gray-800 mb-1">📜 銀行內控考古題系統</h1>
-                        <p className="text-sm text-gray-500">自動讀取 🌟 行動優化版</p>
-                    </header>
-
-                    <main className="w-full glass-morphism rounded-2xl shadow-xl p-5 md:p-10 transition-all duration-300">
-                        {gameState === 'UPLOAD' && (
-                            <div className="flex flex-col items-center justify-center py-10 border-2 border-dashed border-gray-300 rounded-xl bg-white/50 text-center px-4">
-                                {isLoading ? (
-                                    <div className="space-y-3">
-                                        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto"></div>
-                                        <p className="text-gray-600 font-medium text-sm">正在辨識環境與題庫狀態...</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-6 w-full">
-                                        {errorMsg && (
-                                            <div className="bg-amber-50 text-amber-800 p-4 rounded-xl text-sm font-medium text-left border border-amber-200 shadow-inner leading-relaxed">
-                                                {errorMsg}
-                                            </div>
-                                        )}
-                                        <div className="pt-2">
-                                            <input 
-                                                type="file" 
-                                                accept=".xlsx, .xls" 
-                                                onChange={handleFileUpload}
-                                                className="block w-full text-sm text-gray-500 file:mr-auto file:ml-auto file:block file:py-2.5 file:px-5 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer shadow-md"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {gameState === 'CONFIG' && (
-                            <div className="space-y-6">
-                                <h2 className="text-lg md:text-xl font-bold text-gray-700 border-b pb-2">測驗設定</h2>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-600 mb-2">選擇考科</label>
-                                    <div className="flex gap-4">
-                                        {subjects.map(sub => (
-                                            <button
-                                                key={sub}
-                                                onClick={() => setConfig({...config, subject: sub})}
-                                                className={`flex-1 py-3 rounded-xl font-bold border-2 transition-all ${config.subject === sub ? 'bg-blue-600 text-white border-blue-600 shadow-md scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 active:bg-gray-50'}`}
-                                            >
-                                                {sub}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-600 mb-2">
-                                        測驗題數 (該科總共 {currentSubjectMax} 題)
-                                    </label>
-                                    <input 
-                                        type="number" 
-                                        value={config.questionCount}
-                                        onChange={(e) => {
-                                            const val = e.target.value;
-                                            if (val === '') {
-                                                setConfig({...config, questionCount: ''}); // 允許暫時清空
-                                            } else {
-                                                let num = parseInt(val, 10);
-                                                if (num > currentSubjectMax) num = currentSubjectMax; // 自動限制上限
-                                                setConfig({...config, questionCount: num});
-                                            }
-                                        }}
-                                        onBlur={(e) => {
-                                            // 離開輸入框時防呆檢查
-                                            let num = parseInt(e.target.value, 10);
-                                            if (isNaN(num) || num < 1) {
-                                                setConfig({...config, questionCount: 1});
-                                            }
-                                        }}
-                                        className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-lg"
-                                        min="1"
-                                        max={currentSubjectMax}
-                                    />
-                                </div>
-                                <button 
-                                    onClick={startQuiz}
-                                    className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 active:scale-[0.99] transition shadow-lg text-lg"
-                                >
-                                    開始測驗
-                                </button>
-                            </div>
-                        )}
-
-                        {gameState === 'QUIZ' && quizData[currentIndex] && (
-                            <div className="space-y-5">
-                                <div className="flex justify-between items-center text-xs md:text-sm text-blue-600 font-bold">
-                                    <button onClick={returnToMenu} className="flex items-center gap-1 bg-gray-100 px-3 py-1.5 rounded-full text-gray-600 active:bg-gray-200 transition">
-                                        <span>🏠 主選單</span>
-                                    </button>
-                                    <span className="bg-blue-50 px-3 py-1.5 rounded-full">第 {currentIndex + 1} / {quizData.length} 題</span>
-                                </div>
-                                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                                    <div 
-                                        className="bg-blue-500 h-full transition-all duration-300" 
-                                        style={{ width: `${((currentIndex + 1) / quizData.length) * 100}%` }}
-                                    ></div>
-                                </div>
-                                <div className="text-base md:text-lg font-bold text-gray-800 leading-relaxed min-h-[70px] pt-2">
-                                    {quizData[currentIndex].題目 || quizData[currentIndex].Question}
-                                </div>
-                                <div className="grid grid-cols-1 gap-2.5">
-                                    {quizData[currentIndex].parsedOptions.map(opt => {
-                                        const currentAnswer = userAnswers[currentIndex];
-                                        const isAnswered = currentAnswer !== undefined;
-                                        const correctId = quizData[currentIndex].correctAnswerId;
-                                        
-                                        let btnClass = "text-left p-3.5 border-2 rounded-xl transition duration-150 flex items-center w-full text-sm md:text-base ";
-                                        let badgeClass = "w-7 h-7 text-xs rounded-full flex items-center justify-center shrink-0 mr-3 font-bold ";
-
-                                        if (isAnswered) {
-                                            if (opt.id === correctId) {
-                                                btnClass += "bg-green-50 border-green-500 font-bold text-green-900";
-                                                badgeClass += "bg-green-500 text-white shadow-sm";
-                                            } else if (opt.id === currentAnswer) {
-                                                btnClass += "bg-red-50 border-red-500 text-red-900";
-                                                badgeClass += "bg-red-500 text-white shadow-sm";
-                                            } else {
-                                                btnClass += "bg-white border-gray-100 opacity-40";
-                                                badgeClass += "bg-gray-100 text-gray-400";
-                                            }
-                                        } else {
-                                            btnClass += "bg-white border-gray-200 active:bg-blue-50 active:border-blue-500 cursor-pointer";
-                                            badgeClass += "bg-gray-100 text-gray-500";
-                                        }
-
-                                        return (
-                                            <button 
-                                                key={opt.id}
-                                                onClick={() => handleAnswer(opt.id)}
-                                                disabled={isAnswered}
-                                                className={btnClass}
-                                            >
-                                                <span className={badgeClass}>{opt.id}</span>
-                                                <span className="font-medium break-words overflow-hidden">{opt.text}</span>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                                
-                                <div className="flex justify-between items-center mt-6 pt-4 border-t border-gray-100">
-                                    <button 
-                                        onClick={goPrev}
-                                        disabled={currentIndex === 0}
-                                        className={`px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-1.5 transition ${currentIndex === 0 ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : 'bg-white border-2 border-gray-200 text-gray-600 active:bg-gray-100 shadow-sm'}`}
-                                    >
-                                        ⬅️ 上一題
-                                    </button>
-                                    
-                                    {currentIndex < quizData.length - 1 ? (
-                                        <button 
-                                            onClick={goNext}
-                                            className="px-4 py-2.5 rounded-xl font-bold text-sm bg-blue-600 text-white active:bg-blue-700 shadow-md flex items-center gap-1.5 transition"
-                                        >
-                                            下一題 ➡️
-                                        </button>
-                                    ) : (
-                                        <button 
-                                            onClick={calculateResult}
-                                            disabled={userAnswers.includes(undefined)}
-                                            className={`px-4 py-2.5 rounded-xl font-bold text-sm shadow-md transition ${userAnswers.includes(undefined) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white active:bg-green-700'}`}
-                                        >
-                                            📝 看結果
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {gameState === 'RESULT' && (
-                            <div className="text-center space-y-6">
-                                <div>
-                                    <h2 className="text-4xl font-black text-blue-600 mb-1">{score} 分</h2>
-                                    <p className="text-sm text-gray-500 font-medium">測驗完成！</p>
-                                </div>
-                                
-                                <div className="space-y-3 max-h-[350px] overflow-y-auto text-left pr-1 scrollbar-thin">
-                                    {quizData.map((q, idx) => {
-                                        const correct = q.correctAnswerId;
-                                        const user = userAnswers[idx];
-                                        const isCorrect = user === correct;
-                                        
-                                        const correctOptText = q.parsedOptions.find(o => o.id === correct)?.text || correct;
-                                        const userOptText = q.parsedOptions.find(o => o.id === user)?.text || user || '未答';
-
-                                        return (
-                                            <div key={idx} className={`p-4 rounded-xl border-l-4 text-sm ${isCorrect ? 'bg-green-50/70 border-green-500' : 'bg-red-50/70 border-red-500'}`}>
-                                                <p className="font-bold text-gray-800 mb-1">第 {idx + 1} 題：{isCorrect ? '✅ 正確' : '❌ 錯誤'}</p>
-                                                <p className="text-xs md:text-sm text-gray-600 mb-2 font-medium">{q.題目 || q.Question}</p>
-                                                <div className="space-y-0.5 text-xs md:text-sm">
-                                                    <div className="text-green-700 font-bold">正確答案：({correct}) {correctOptText}</div>
-                                                    {!isCorrect && <div className="text-red-600 font-bold">你的答案：({user}) {userOptText}</div>}
-                                                </div>
-                                                {(q.解析 || q.Rationale) && (
-                                                    <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-500 italic">
-                                                        解析：{q.解析 || q.Rationale}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                                <button 
-                                    onClick={() => setGameState('CONFIG')}
-                                    className="w-full py-4 bg-gray-800 text-white rounded-xl font-bold hover:bg-black active:scale-[0.99] transition shadow-lg text-lg"
-                                >
-                                    再考一次
-                                </button>
-                            </div>
-                        )}
-                    </main>
-                    <footer className="mt-6 text-gray-400 text-[10px] md:text-xs text-center px-4 leading-normal">
-                        支援格式：需包含「期別/科目」(內含法規或實務)、「題目」、「選項」、「正確答案」
-                    </footer>
-                </div>
-            );
-        }
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
+<p class="p1">&lt;!DOCTYPE html&gt;</p>
+<p class="p1">&lt;html lang="zh-TW"&gt;</p>
+<p class="p1">&lt;head&gt;</p>
+<p class="p1">    &lt;meta charset="UTF-8"&gt;</p>
+<p class="p1">    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"&gt;</p>
+<p class="p1">    &lt;title&gt;銀行內控考古題系統&lt;/title&gt;</p>
+<p class="p1">    &lt;script src="https://unpkg.com/react@18/umd/react.production.min.js"&gt;&lt;/script&gt;</p>
+<p class="p1">    &lt;script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"&gt;&lt;/script&gt;</p>
+<p class="p1">    &lt;script src="https://unpkg.com/@babel/standalone/babel.min.js"&gt;&lt;/script&gt;</p>
+<p class="p1">    &lt;script src="https://cdn.tailwindcss.com"&gt;&lt;/script&gt;</p>
+<p class="p1">    &lt;script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"&gt;&lt;/script&gt;</p>
+<p class="p1">    &lt;style&gt;</p>
+<p class="p1">        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght=400;500;700&amp;display=swap');</p>
+<p class="p1">        body {<span class="Apple-converted-space"> </span></p>
+<p class="p1">            font-family: 'Noto+Sans+TC', sans-serif;<span class="Apple-converted-space"> </span></p>
+<p class="p1">            background-color: #f3f4f6;</p>
+<p class="p1">            -webkit-tap-highlight-color: transparent;</p>
+<p class="p1">        }</p>
+<p class="p1">        .glass-morphism {</p>
+<p class="p1">            background: rgba(255, 255, 255, 0.98);</p>
+<p class="p1">            backdrop-filter: blur(10px);</p>
+<p class="p1">            border: 1px solid rgba(255, 255, 255, 0.2);</p>
+<p class="p1">        }</p>
+<p class="p1">    &lt;/style&gt;</p>
+<p class="p1">&lt;/head&gt;</p>
+<p class="p1">&lt;body&gt;</p>
+<p class="p1">    &lt;div id="root"&gt;&lt;/div&gt;</p>
+<p class="p2"><br></p>
+<p class="p1">    &lt;script type="text/babel"&gt;</p>
+<p class="p1">        const { useState, useEffect } = React;</p>
+<p class="p2"><br></p>
+<p class="p1">        function App() {</p>
+<p class="p1">            const [rawData, setRawData] = useState([]);</p>
+<p class="p1">            const [subjects, setSubjects] = useState([]);</p>
+<p class="p1">            const [gameState, setGameState] = useState('UPLOAD'); // UPLOAD, CONFIG, QUIZ, RESULT</p>
+<p class="p1">            </p>
+<p class="p1">            const [config, setConfig] = useState({</p>
+<p class="p1">                subject: '',</p>
+<p class="p1">                questionCount: 10</p>
+<p class="p1">            });</p>
+<p class="p2"><br></p>
+<p class="p1">            const [quizData, setQuizData] = useState([]);</p>
+<p class="p1">            const [currentIndex, setCurrentIndex] = useState(0);</p>
+<p class="p1">            const [userAnswers, setUserAnswers] = useState([]);</p>
+<p class="p1">            const [score, setScore] = useState(null);</p>
+<p class="p1">            const [errorMsg, setErrorMsg] = useState(null);</p>
+<p class="p1">            const [isLoading, setIsLoading] = useState(true);</p>
+<p class="p2"><br></p>
+<p class="p1">            // 核心資料解析與處理邏輯</p>
+<p class="p1">            const processExcelData = (data) =&gt; {</p>
+<p class="p1">                try {</p>
+<p class="p1">                    const processedData = data.map(item =&gt; {</p>
+<p class="p1">                        let cat = '其他';</p>
+<p class="p1">                        const rawSubject = item['期別/科目'] || item['考科'] || '';</p>
+<p class="p1">                        if (rawSubject.includes('法規')) cat = '法規';</p>
+<p class="p1">                        else if (rawSubject.includes('實務')) cat = '實務';</p>
+<p class="p2"><br></p>
+<p class="p1">                        let parsedOptions = [];</p>
+<p class="p1">                        if (item['選項']) {</p>
+<p class="p1">                            const rawOptions = item['選項'].toString();</p>
+<p class="p1">                            const regex = /\((\d)\)\s*([^]*?)(?=\(\d\)|$)/g;</p>
+<p class="p1">                            const matches = [...rawOptions.matchAll(regex)];</p>
+<p class="p2"><br></p>
+<p class="p1">                            if (matches.length &gt; 0) {</p>
+<p class="p1">                                parsedOptions = matches.map(m =&gt; ({ id: m[1], text: m[2].trim(), raw: m[0].trim() }));</p>
+<p class="p1">                            } else {</p>
+<p class="p1">                                const opts = rawOptions.split('\n').filter(o =&gt; o.trim() !== '');</p>
+<p class="p1">                                parsedOptions = opts.map(opt =&gt; {</p>
+<p class="p1">                                    const match = opt.match(/^\((\d)\)\s*(.*)/);</p>
+<p class="p1">                                    if (match) return { id: match[1], text: match[2], raw: opt };</p>
+<p class="p1">                                    return { id: opt, text: opt, raw: opt };</p>
+<p class="p1">                                });</p>
+<p class="p1">                            }</p>
+<p class="p1">                        } else {</p>
+<p class="p1">                            ['A', 'B', 'C', 'D'].forEach(label =&gt; {</p>
+<p class="p1">                                if (item[`選項${label}`] || item[label]) {</p>
+<p class="p1">                                    parsedOptions.push({ id: label, text: item[`選項${label}`] || item[label], raw: label });</p>
+<p class="p1">                                }</p>
+<p class="p1">                            });</p>
+<p class="p1">                        }</p>
+<p class="p2"><br></p>
+<p class="p1">                        return {</p>
+<p class="p1">                            ...item,</p>
+<p class="p1">                            subjectCategory: cat,</p>
+<p class="p1">                            parsedOptions: parsedOptions,</p>
+<p class="p1">                            correctAnswerId: item['正確答案'] ? item['正確答案'].toString().trim() : (item['Answer'] ? item['Answer'].toString().trim() : '')</p>
+<p class="p1">                        };</p>
+<p class="p1">                    }).filter(item =&gt; item.subjectCategory !== '其他');</p>
+<p class="p2"><br></p>
+<p class="p1">                    if (processedData.length === 0) {</p>
+<p class="p1">                        setErrorMsg("找不到「法規」或「實務」相關考題，請檢查 Excel 內容。");</p>
+<p class="p1">                        setIsLoading(false);</p>
+<p class="p1">                        return false;</p>
+<p class="p1">                    }</p>
+<p class="p2"><br></p>
+<p class="p1">                    const availableSubjects = [...new Set(processedData.map(item =&gt; item.subjectCategory))];</p>
+<p class="p1">                    setRawData(processedData);</p>
+<p class="p1">                    setSubjects(availableSubjects);</p>
+<p class="p1">                    setConfig(prev =&gt; ({ ...prev, subject: availableSubjects[0] }));</p>
+<p class="p1">                    setGameState('CONFIG');</p>
+<p class="p1">                    setErrorMsg(null);</p>
+<p class="p1">                    setIsLoading(false);</p>
+<p class="p1">                    return true;</p>
+<p class="p1">                } catch (e) {</p>
+<p class="p1">                    setErrorMsg("解析 Excel 資料時發生錯誤，請確認欄位格式。");</p>
+<p class="p1">                    setIsLoading(false);</p>
+<p class="p1">                    return false;</p>
+<p class="p1">                }</p>
+<p class="p1">            };</p>
+<p class="p2"><br></p>
+<p class="p1">            // 網頁開啟時的安全檢查</p>
+<p class="p1">            useEffect(() =&gt; {</p>
+<p class="p1">                if (window.location.protocol === 'file:') {</p>
+<p class="p1">                    setErrorMsg("【本地模式說明】受限於瀏覽器安全機制，直接雙擊 HTML 檔案時無法自動讀取同目錄下的 all.xlsx。請點擊下方按鈕手動上傳。若要啟用自動讀取與 iPhone 支援，請將檔案放上 GitHub Pages 環境。");</p>
+<p class="p1">                    setIsLoading(false);</p>
+<p class="p1">                    return;</p>
+<p class="p1">                }</p>
+<p class="p2"><br></p>
+<p class="p1">                const autoLoadExcel = async () =&gt; {</p>
+<p class="p1">                    try {</p>
+<p class="p1">                        const response = await fetch('all.xlsx');</p>
+<p class="p1">                        if (!response.ok) {</p>
+<p class="p1">                            throw new Error(`找不到檔案 (HTTP ${response.status})`);</p>
+<p class="p1">                        }</p>
+<p class="p1">                        const arrayBuffer = await response.arrayBuffer();</p>
+<p class="p1">                        const wb = XLSX.read(arrayBuffer, { type: 'array' });</p>
+<p class="p1">                        const wsname = wb.SheetNames[0];</p>
+<p class="p1">                        const ws = wb.Sheets[wsname];</p>
+<p class="p1">                        const data = XLSX.utils.sheet_to_json(ws);</p>
+<p class="p1">                        </p>
+<p class="p1">                        processExcelData(data);</p>
+<p class="p1">                    } catch (error) {</p>
+<p class="p1">                        setErrorMsg("錯誤：在伺服器目錄下找不到 all.xlsx 檔案，請確認檔案名稱與位置是否正確。");</p>
+<p class="p1">                        setIsLoading(false);</p>
+<p class="p1">                    }</p>
+<p class="p1">                };</p>
+<p class="p2"><br></p>
+<p class="p1">                autoLoadExcel();</p>
+<p class="p1">            }, []);</p>
+<p class="p2"><br></p>
+<p class="p1">            const handleFileUpload = (e) =&gt; {</p>
+<p class="p1">                const file = e.target.files[0];</p>
+<p class="p1">                if (!file) return;</p>
+<p class="p2"><br></p>
+<p class="p1">                setIsLoading(true);</p>
+<p class="p1">                const reader = new FileReader();</p>
+<p class="p1">                reader.onload = (evt) =&gt; {</p>
+<p class="p1">                    try {</p>
+<p class="p1">                        const bstr = evt.target.result;</p>
+<p class="p1">                        const wb = XLSX.read(bstr, { type: 'binary' });</p>
+<p class="p1">                        const wsname = wb.SheetNames[0];</p>
+<p class="p1">                        const ws = wb.Sheets[wsname];</p>
+<p class="p1">                        const data = XLSX.utils.sheet_to_json(ws);</p>
+<p class="p1">                        processExcelData(data);</p>
+<p class="p1">                    } catch (err) {</p>
+<p class="p1">                        setErrorMsg("檔案讀取失敗，請確認是否為標準 Excel 檔案。");</p>
+<p class="p1">                        setIsLoading(false);</p>
+<p class="p1">                    }</p>
+<p class="p1">                };</p>
+<p class="p1">                reader.readAsBinaryString(file);</p>
+<p class="p1">            };</p>
+<p class="p2"><br></p>
+<p class="p1">            // 【核心修改點】完美的 Fisher-Yates 洗牌演算法</p>
+<p class="p1">            const startQuiz = () =&gt; {</p>
+<p class="p1">                const filtered = rawData.filter(item =&gt; item.subjectCategory === config.subject);</p>
+<p class="p1">                </p>
+<p class="p1">                // 複製一份陣列，避免污染原始 rawData</p>
+<p class="p1">                let shuffled = [...filtered];<span class="Apple-converted-space"> </span></p>
+<p class="p1">                </p>
+<p class="p1">                // 從後往前洗牌，保證機率絕對平均且絕不重複</p>
+<p class="p1">                for (let i = shuffled.length - 1; i &gt; 0; i--) {</p>
+<p class="p1">                    const j = Math.floor(Math.random() * (i + 1));</p>
+<p class="p1">                    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];</p>
+<p class="p1">                }</p>
+<p class="p2"><br></p>
+<p class="p1">                // 防呆：如果按下開始時輸入框是空的，預設為10題</p>
+<p class="p1">                const count = parseInt(config.questionCount) || 10;</p>
+<p class="p1">                const selected = shuffled.slice(0, Math.min(count, filtered.length));</p>
+<p class="p1">                </p>
+<p class="p1">                setQuizData(selected);</p>
+<p class="p1">                setCurrentIndex(0);</p>
+<p class="p1">                setUserAnswers(new Array(selected.length).fill(undefined));</p>
+<p class="p1">                setGameState('QUIZ');</p>
+<p class="p1">            };</p>
+<p class="p2"><br></p>
+<p class="p1">            const handleAnswer = (optionId) =&gt; {</p>
+<p class="p1">                if (userAnswers[currentIndex] !== undefined) return;</p>
+<p class="p1">                const updatedAnswers = [...userAnswers];</p>
+<p class="p1">                updatedAnswers[currentIndex] = optionId;</p>
+<p class="p1">                setUserAnswers(updatedAnswers);</p>
+<p class="p1">                setTimeout(() =&gt; {</p>
+<p class="p1">                    setCurrentIndex(prev =&gt; prev &lt; quizData.length - 1 ? prev + 1 : prev);</p>
+<p class="p1">                }, 800);</p>
+<p class="p1">            };</p>
+<p class="p2"><br></p>
+<p class="p1">            const goPrev = () =&gt; { if (currentIndex &gt; 0) setCurrentIndex(currentIndex - 1); };</p>
+<p class="p1">            const goNext = () =&gt; { if (currentIndex &lt; quizData.length - 1) setCurrentIndex(currentIndex + 1); };</p>
+<p class="p1">            const returnToMenu = () =&gt; setGameState('CONFIG');</p>
+<p class="p1">            const calculateResult = () =&gt; {</p>
+<p class="p1">                let correctCount = 0;</p>
+<p class="p1">                quizData.forEach((q, idx) =&gt; {</p>
+<p class="p1">                    if ((userAnswers[idx] || "").toString().trim() === q.correctAnswerId) correctCount++;</p>
+<p class="p1">                });</p>
+<p class="p1">                setScore(Math.round((correctCount / quizData.length) * 100));</p>
+<p class="p1">                setGameState('RESULT');</p>
+<p class="p1">            };</p>
+<p class="p2"><br></p>
+<p class="p1">            // 取得目前選擇考科的最大題數</p>
+<p class="p1">            const currentSubjectMax = rawData.filter(item =&gt; item.subjectCategory === config.subject).length;</p>
+<p class="p2"><br></p>
+<p class="p1">            return (</p>
+<p class="p1">                &lt;div className="min-h-screen p-4 md:p-8 flex flex-col items-center justify-start max-w-md mx-auto sm:max-w-2xl"&gt;</p>
+<p class="p1">                    &lt;header className="mb-6 text-center w-full"&gt;</p>
+<p class="p1">                        &lt;h1 className="text-2xl md:text-3xl font-bold text-gray-800 mb-1"&gt;📜 銀行內控考古題系統&lt;/h1&gt;</p>
+<p class="p1">                        &lt;p className="text-sm text-gray-500"&gt;自動讀取 🌟 行動優化版&lt;/p&gt;</p>
+<p class="p1">                    &lt;/header&gt;</p>
+<p class="p2"><br></p>
+<p class="p1">                    &lt;main className="w-full glass-morphism rounded-2xl shadow-xl p-5 md:p-10 transition-all duration-300"&gt;</p>
+<p class="p1">                        {gameState === 'UPLOAD' &amp;&amp; (</p>
+<p class="p1">                            &lt;div className="flex flex-col items-center justify-center py-10 border-2 border-dashed border-gray-300 rounded-xl bg-white/50 text-center px-4"&gt;</p>
+<p class="p1">                                {isLoading ? (</p>
+<p class="p1">                                    &lt;div className="space-y-3"&gt;</p>
+<p class="p1">                                        &lt;div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto"&gt;&lt;/div&gt;</p>
+<p class="p1">                                        &lt;p className="text-gray-600 font-medium text-sm"&gt;正在辨識環境與題庫狀態...&lt;/p&gt;</p>
+<p class="p1">                                    &lt;/div&gt;</p>
+<p class="p1">                                ) : (</p>
+<p class="p1">                                    &lt;div className="space-y-6 w-full"&gt;</p>
+<p class="p1">                                        {errorMsg &amp;&amp; (</p>
+<p class="p1">                                            &lt;div className="bg-amber-50 text-amber-800 p-4 rounded-xl text-sm font-medium text-left border border-amber-200 shadow-inner leading-relaxed"&gt;</p>
+<p class="p1">                                                {errorMsg}</p>
+<p class="p1">                                            &lt;/div&gt;</p>
+<p class="p1">                                        )}</p>
+<p class="p1">                                        &lt;div className="pt-2"&gt;</p>
+<p class="p1">                                            &lt;input<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                                type="file"<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                                accept=".xlsx, .xls"<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                                onChange={handleFileUpload}</p>
+<p class="p1">                                                className="block w-full text-sm text-gray-500 file:mr-auto file:ml-auto file:block file:py-2.5 file:px-5 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer shadow-md"</p>
+<p class="p1">                                            /&gt;</p>
+<p class="p1">                                        &lt;/div&gt;</p>
+<p class="p1">                                    &lt;/div&gt;</p>
+<p class="p1">                                )}</p>
+<p class="p1">                            &lt;/div&gt;</p>
+<p class="p1">                        )}</p>
+<p class="p2"><br></p>
+<p class="p1">                        {gameState === 'CONFIG' &amp;&amp; (</p>
+<p class="p1">                            &lt;div className="space-y-6"&gt;</p>
+<p class="p1">                                &lt;h2 className="text-lg md:text-xl font-bold text-gray-700 border-b pb-2"&gt;測驗設定&lt;/h2&gt;</p>
+<p class="p1">                                &lt;div&gt;</p>
+<p class="p1">                                    &lt;label className="block text-sm font-medium text-gray-600 mb-2"&gt;選擇考科&lt;/label&gt;</p>
+<p class="p1">                                    &lt;div className="flex gap-4"&gt;</p>
+<p class="p1">                                        {subjects.map(sub =&gt; (</p>
+<p class="p1">                                            &lt;button</p>
+<p class="p1">                                                key={sub}</p>
+<p class="p1">                                                onClick={() =&gt; setConfig({...config, subject: sub})}</p>
+<p class="p1">                                                className={`flex-1 py-3 rounded-xl font-bold border-2 transition-all ${config.subject === sub ? 'bg-blue-600 text-white border-blue-600 shadow-md scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 active:bg-gray-50'}`}</p>
+<p class="p1">                                            &gt;</p>
+<p class="p1">                                                {sub}</p>
+<p class="p1">                                            &lt;/button&gt;</p>
+<p class="p1">                                        ))}</p>
+<p class="p1">                                    &lt;/div&gt;</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                                &lt;div&gt;</p>
+<p class="p1">                                    &lt;label className="block text-sm font-medium text-gray-600 mb-2"&gt;</p>
+<p class="p1">                                        測驗題數 (該科總共 {currentSubjectMax} 題)</p>
+<p class="p1">                                    &lt;/label&gt;</p>
+<p class="p1">                                    &lt;input<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                        type="number"<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                        value={config.questionCount}</p>
+<p class="p1">                                        onChange={(e) =&gt; {</p>
+<p class="p1">                                            const val = e.target.value;</p>
+<p class="p1">                                            if (val === '') {</p>
+<p class="p1">                                                setConfig({...config, questionCount: ''}); // 允許暫時清空</p>
+<p class="p1">                                            } else {</p>
+<p class="p1">                                                let num = parseInt(val, 10);</p>
+<p class="p1">                                                if (num &gt; currentSubjectMax) num = currentSubjectMax; // 自動限制上限</p>
+<p class="p1">                                                setConfig({...config, questionCount: num});</p>
+<p class="p1">                                            }</p>
+<p class="p1">                                        }}</p>
+<p class="p1">                                        onBlur={(e) =&gt; {</p>
+<p class="p1">                                            // 離開輸入框時防呆檢查</p>
+<p class="p1">                                            let num = parseInt(e.target.value, 10);</p>
+<p class="p1">                                            if (isNaN(num) || num &lt; 1) {</p>
+<p class="p1">                                                setConfig({...config, questionCount: 1});</p>
+<p class="p1">                                            }</p>
+<p class="p1">                                        }}</p>
+<p class="p1">                                        className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-lg"</p>
+<p class="p1">                                        min="1"</p>
+<p class="p1">                                        max={currentSubjectMax}</p>
+<p class="p1">                                    /&gt;</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                                &lt;button<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                    onClick={startQuiz}</p>
+<p class="p1">                                    className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 active:scale-[0.99] transition shadow-lg text-lg"</p>
+<p class="p1">                                &gt;</p>
+<p class="p1">                                    開始測驗</p>
+<p class="p1">                                &lt;/button&gt;</p>
+<p class="p1">                            &lt;/div&gt;</p>
+<p class="p1">                        )}</p>
+<p class="p2"><br></p>
+<p class="p1">                        {gameState === 'QUIZ' &amp;&amp; quizData[currentIndex] &amp;&amp; (</p>
+<p class="p1">                            &lt;div className="space-y-5"&gt;</p>
+<p class="p1">                                &lt;div className="flex justify-between items-center text-xs md:text-sm text-blue-600 font-bold"&gt;</p>
+<p class="p1">                                    &lt;button onClick={returnToMenu} className="flex items-center gap-1 bg-gray-100 px-3 py-1.5 rounded-full text-gray-600 active:bg-gray-200 transition"&gt;</p>
+<p class="p1">                                        &lt;span&gt;🏠 主選單&lt;/span&gt;</p>
+<p class="p1">                                    &lt;/button&gt;</p>
+<p class="p1">                                    &lt;span className="bg-blue-50 px-3 py-1.5 rounded-full"&gt;第 {currentIndex + 1} / {quizData.length} 題&lt;/span&gt;</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                                &lt;div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"&gt;</p>
+<p class="p1">                                    &lt;div<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                        className="bg-blue-500 h-full transition-all duration-300"<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                        style={{ width: `${((currentIndex + 1) / quizData.length) * 100}%` }}</p>
+<p class="p1">                                    &gt;&lt;/div&gt;</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                                &lt;div className="text-base md:text-lg font-bold text-gray-800 leading-relaxed min-h-[70px] pt-2"&gt;</p>
+<p class="p1">                                    {quizData[currentIndex].題目 || quizData[currentIndex].Question}</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                                &lt;div className="grid grid-cols-1 gap-2.5"&gt;</p>
+<p class="p1">                                    {quizData[currentIndex].parsedOptions.map(opt =&gt; {</p>
+<p class="p1">                                        const currentAnswer = userAnswers[currentIndex];</p>
+<p class="p1">                                        const isAnswered = currentAnswer !== undefined;</p>
+<p class="p1">                                        const correctId = quizData[currentIndex].correctAnswerId;</p>
+<p class="p1">                                        </p>
+<p class="p1">                                        let btnClass = "text-left p-3.5 border-2 rounded-xl transition duration-150 flex items-center w-full text-sm md:text-base ";</p>
+<p class="p1">                                        let badgeClass = "w-7 h-7 text-xs rounded-full flex items-center justify-center shrink-0 mr-3 font-bold ";</p>
+<p class="p2"><br></p>
+<p class="p1">                                        if (isAnswered) {</p>
+<p class="p1">                                            if (opt.id === correctId) {</p>
+<p class="p1">                                                btnClass += "bg-green-50 border-green-500 font-bold text-green-900";</p>
+<p class="p1">                                                badgeClass += "bg-green-500 text-white shadow-sm";</p>
+<p class="p1">                                            } else if (opt.id === currentAnswer) {</p>
+<p class="p1">                                                btnClass += "bg-red-50 border-red-500 text-red-900";</p>
+<p class="p1">                                                badgeClass += "bg-red-500 text-white shadow-sm";</p>
+<p class="p1">                                            } else {</p>
+<p class="p1">                                                btnClass += "bg-white border-gray-100 opacity-40";</p>
+<p class="p1">                                                badgeClass += "bg-gray-100 text-gray-400";</p>
+<p class="p1">                                            }</p>
+<p class="p1">                                        } else {</p>
+<p class="p1">                                            btnClass += "bg-white border-gray-200 active:bg-blue-50 active:border-blue-500 cursor-pointer";</p>
+<p class="p1">                                            badgeClass += "bg-gray-100 text-gray-500";</p>
+<p class="p1">                                        }</p>
+<p class="p2"><br></p>
+<p class="p1">                                        return (</p>
+<p class="p1">                                            &lt;button<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                                key={opt.id}</p>
+<p class="p1">                                                onClick={() =&gt; handleAnswer(opt.id)}</p>
+<p class="p1">                                                disabled={isAnswered}</p>
+<p class="p1">                                                className={btnClass}</p>
+<p class="p1">                                            &gt;</p>
+<p class="p1">                                                &lt;span className={badgeClass}&gt;{opt.id}&lt;/span&gt;</p>
+<p class="p1">                                                &lt;span className="font-medium break-words overflow-hidden"&gt;{opt.text}&lt;/span&gt;</p>
+<p class="p1">                                            &lt;/button&gt;</p>
+<p class="p1">                                        );</p>
+<p class="p1">                                    })}</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                                </p>
+<p class="p1">                                &lt;div className="flex justify-between items-center mt-6 pt-4 border-t border-gray-100"&gt;</p>
+<p class="p1">                                    &lt;button<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                        onClick={goPrev}</p>
+<p class="p1">                                        disabled={currentIndex === 0}</p>
+<p class="p1">                                        className={`px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-1.5 transition ${currentIndex === 0 ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : 'bg-white border-2 border-gray-200 text-gray-600 active:bg-gray-100 shadow-sm'}`}</p>
+<p class="p1">                                    &gt;</p>
+<p class="p1">                                        ⬅️ 上一題</p>
+<p class="p1">                                    &lt;/button&gt;</p>
+<p class="p1">                                    </p>
+<p class="p1">                                    {currentIndex &lt; quizData.length - 1 ? (</p>
+<p class="p1">                                        &lt;button<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                            onClick={goNext}</p>
+<p class="p1">                                            className="px-4 py-2.5 rounded-xl font-bold text-sm bg-blue-600 text-white active:bg-blue-700 shadow-md flex items-center gap-1.5 transition"</p>
+<p class="p1">                                        &gt;</p>
+<p class="p1">                                            下一題 ➡️</p>
+<p class="p1">                                        &lt;/button&gt;</p>
+<p class="p1">                                    ) : (</p>
+<p class="p1">                                        &lt;button<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                            onClick={calculateResult}</p>
+<p class="p1">                                            disabled={userAnswers.includes(undefined)}</p>
+<p class="p1">                                            className={`px-4 py-2.5 rounded-xl font-bold text-sm shadow-md transition ${userAnswers.includes(undefined) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white active:bg-green-700'}`}</p>
+<p class="p1">                                        &gt;</p>
+<p class="p1">                                            📝 看結果</p>
+<p class="p1">                                        &lt;/button&gt;</p>
+<p class="p1">                                    )}</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                            &lt;/div&gt;</p>
+<p class="p1">                        )}</p>
+<p class="p2"><br></p>
+<p class="p1">                        {gameState === 'RESULT' &amp;&amp; (</p>
+<p class="p1">                            &lt;div className="text-center space-y-6"&gt;</p>
+<p class="p1">                                &lt;div&gt;</p>
+<p class="p1">                                    &lt;h2 className="text-4xl font-black text-blue-600 mb-1"&gt;{score} 分&lt;/h2&gt;</p>
+<p class="p1">                                    &lt;p className="text-sm text-gray-500 font-medium"&gt;測驗完成！&lt;/p&gt;</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p1">                                </p>
+<p class="p1">                                &lt;div className="space-y-3 max-h-[350px] overflow-y-auto text-left pr-1 scrollbar-thin"&gt;</p>
+<p class="p1">                                    {quizData.map((q, idx) =&gt; {</p>
+<p class="p1">                                        const correct = q.correctAnswerId;</p>
+<p class="p1">                                        const user = userAnswers[idx];</p>
+<p class="p1">                                        const isCorrect = user === correct;</p>
+<p class="p1">                                        </p>
+<p class="p1">                                        const correctOptText = q.parsedOptions.find(o =&gt; o.id === correct)?.text || correct;</p>
+<p class="p1">                                        const userOptText = q.parsedOptions.find(o =&gt; o.id === user)?.text || user || '未答';</p>
+<p class="p2"><br></p>
+<p class="p1">                                        return (</p>
+<p class="p1">                                            &lt;div key={idx} className={`p-4 rounded-xl border-l-4 text-sm ${isCorrect ? 'bg-green-50/70 border-green-500' : 'bg-red-50/70 border-red-500'}`}&gt;</p>
+<p class="p1">                                                &lt;p className="font-bold text-gray-800 mb-1"&gt;第 {idx + 1} 題：{isCorrect ? '✅ 正確' : '❌ 錯誤'}&lt;/p&gt;</p>
+<p class="p1">                                                &lt;p className="text-xs md:text-sm text-gray-600 mb-2 font-medium"&gt;{q.題目 || q.Question}&lt;/p&gt;</p>
+<p class="p1">                                                &lt;div className="space-y-0.5 text-xs md:text-sm"&gt;</p>
+<p class="p1">                                                    &lt;div className="text-green-700 font-bold"&gt;正確答案：({correct}) {correctOptText}&lt;/div&gt;</p>
+<p class="p1">                                                    {!isCorrect &amp;&amp; &lt;div className="text-red-600 font-bold"&gt;你的答案：({user}) {userOptText}&lt;/div&gt;}</p>
+<p class="p1">                                                &lt;/div&gt;</p>
+<p class="p1">                                                {(q.解析 || q.Rationale) &amp;&amp; (</p>
+<p class="p1">                                                    &lt;div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-500 italic"&gt;</p>
+<p class="p1">                                                        解析：{q.解析 || q.Rationale}</p>
+<p class="p1">                                                    &lt;/div&gt;</p>
+<p class="p1">                                                )}</p>
+<p class="p1">                                            &lt;/div&gt;</p>
+<p class="p1">                                        );</p>
+<p class="p1">                                    })}</p>
+<p class="p1">                                &lt;/div&gt;</p>
+<p class="p2"><br></p>
+<p class="p1">                                &lt;button<span class="Apple-converted-space"> </span></p>
+<p class="p1">                                    onClick={() =&gt; setGameState('CONFIG')}</p>
+<p class="p1">                                    className="w-full py-4 bg-gray-800 text-white rounded-xl font-bold hover:bg-black active:scale-[0.99] transition shadow-lg text-lg"</p>
+<p class="p1">                                &gt;</p>
+<p class="p1">                                    再考一次</p>
+<p class="p1">                                &lt;/button&gt;</p>
+<p class="p1">                            &lt;/div&gt;</p>
+<p class="p1">                        )}</p>
+<p class="p1">                    &lt;/main&gt;</p>
+<p class="p1">                    &lt;footer className="mt-6 text-gray-400 text-[10px] md:text-xs text-center px-4 leading-normal"&gt;</p>
+<p class="p1">                        支援格式：需包含「期別/科目」(內含法規或實務)、「題目」、「選項」、「正確答案」</p>
+<p class="p1">                    &lt;/footer&gt;</p>
+<p class="p1">                &lt;/div&gt;</p>
+<p class="p1">            );</p>
+<p class="p1">        }</p>
+<p class="p2"><br></p>
+<p class="p1">        const root = ReactDOM.createRoot(document.getElementById('root'));</p>
+<p class="p1">        root.render(&lt;App /&gt;);</p>
+<p class="p1">    &lt;/script&gt;</p>
+<p class="p1">&lt;/body&gt;</p>
+<p class="p1">&lt;/html&gt;</p>
 </body>
 </html>
