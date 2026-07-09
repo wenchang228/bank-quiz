@@ -46,7 +46,7 @@
             const [errorMsg, setErrorMsg] = useState(null);
             const [isLoading, setIsLoading] = useState(true);
             
-            // 新增：追蹤各科目已經出過的題目 UID，避免重複
+            // 追蹤各科目已經出過的題目 UID，避免重複
             const [usedQuestions, setUsedQuestions] = useState({}); 
 
             // 核心資料解析與處理邏輯
@@ -84,7 +84,7 @@
 
                         return {
                             ...item,
-                            _uid: Math.random().toString(36).substring(2, 11), // 新增唯一識別碼
+                            _uid: Math.random().toString(36).substring(2, 11), // 唯一識別碼
                             subjectCategory: cat,
                             parsedOptions: parsedOptions,
                             correctAnswerId: item['正確答案'] ? item['正確答案'].toString().trim() : (item['Answer'] ? item['Answer'].toString().trim() : '')
@@ -162,6 +162,15 @@
                     }
                 };
                 reader.readAsBinaryString(file);
+            };
+
+            // 新增：手動清除該科目的作答紀錄（重置功能）
+            const resetSubjectHistory = () => {
+                setUsedQuestions(prev => ({
+                    ...prev,
+                    [config.subject]: []
+                }));
+                alert(`【${config.subject}】的作答歷史紀錄已清空！`);
             };
 
             const startQuiz = () => {
@@ -303,6 +312,25 @@
                                         max={currentSubjectMax}
                                     />
                                 </div>
+
+                                {/* 新增的重置資訊欄位與按鈕區塊 */}
+                                <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                    <span className="text-sm text-gray-600 font-medium">
+                                        該科已刷：<span className="text-blue-600 font-bold">{usedQuestions[config.subject]?.length || 0}</span> / {currentSubjectMax} 題
+                                    </span>
+                                    <button 
+                                        onClick={resetSubjectHistory}
+                                        disabled={!(usedQuestions[config.subject]?.length > 0)}
+                                        className={`px-3 py-1.5 text-xs rounded-lg font-bold transition flex items-center gap-1 ${
+                                            usedQuestions[config.subject]?.length > 0 
+                                            ? 'bg-red-100 text-red-600 hover:bg-red-200 active:scale-95 cursor-pointer' 
+                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        🔄 重置紀錄
+                                    </button>
+                                </div>
+
                                 <button 
                                     onClick={startQuiz}
                                     className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 active:scale-[0.99] transition shadow-lg text-lg"
