@@ -89,7 +89,12 @@
                             parsedOptions: parsedOptions,
                             correctAnswerId: item['正確答案'] ? item['正確答案'].toString().trim() : (item['Answer'] ? item['Answer'].toString().trim() : '')
                         };
-                    }).filter(item => item.subjectCategory !== '其他');
+                    }).filter(item => {
+                        // 【功能新增】：過濾掉空白的幽靈題目
+                        const isValidSubject = item.subjectCategory !== '其他';
+                        const questionText = (item['題目'] || item['Question'] || '').toString().trim();
+                        return isValidSubject && questionText !== '';
+                    });
 
                     if (processedData.length === 0) {
                         setErrorMsg("找不到「法規」或「實務」相關考題，請檢查 Excel 內容。");
@@ -164,7 +169,7 @@
                 reader.readAsBinaryString(file);
             };
 
-            // 新增：手動清除該科目的作答紀錄（重置功能）
+            // 手動清除該科目的作答紀錄（重置功能）
             const resetSubjectHistory = () => {
                 setUsedQuestions(prev => ({
                     ...prev,
@@ -219,7 +224,21 @@
             const goPrev = () => { if (currentIndex > 0) setCurrentIndex(currentIndex - 1); };
             const goNext = () => { if (currentIndex < quizData.length - 1) setCurrentIndex(currentIndex + 1); };
             const returnToMenu = () => setGameState('CONFIG');
+            
+            // 【功能新增】：看結果時檢查未答題數
             const calculateResult = () => {
+                const unansweredIndices = [];
+                userAnswers.forEach((ans, idx) => {
+                    if (ans === undefined) {
+                        unansweredIndices.push(idx + 1); // 收集未答的題號（從 1 開始）
+                    }
+                });
+
+                if (unansweredIndices.length > 0) {
+                    alert(`⚠️ 還有題目尚未選擇答案喔！\n\n未答題號：第 ${unansweredIndices.join('、')} 題\n\n請補齊答案後再查看結果。`);
+                    return; // 阻斷往下執行，停留在目前的測驗畫面
+                }
+
                 let correctCount = 0;
                 quizData.forEach((q, idx) => {
                     if ((userAnswers[idx] || "").toString().trim() === q.correctAnswerId) correctCount++;
@@ -313,7 +332,7 @@
                                     />
                                 </div>
 
-                                {/* 新增的重置資訊欄位與按鈕區塊 */}
+                                {/* 重置資訊欄位與按鈕區塊 */}
                                 <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200">
                                     <span className="text-sm text-gray-600 font-medium">
                                         該科已刷：<span className="text-blue-600 font-bold">{usedQuestions[config.subject]?.length || 0}</span> / {currentSubjectMax} 題
@@ -413,10 +432,10 @@
                                             下一題 ➡️
                                         </button>
                                     ) : (
+                                        /* 【功能新增】：解開鎖定狀態，改為常駐顯示綠色按鈕，透過 onClick 執行防呆檢查 */
                                         <button 
                                             onClick={calculateResult}
-                                            disabled={userAnswers.includes(undefined)}
-                                            className={`px-4 py-2.5 rounded-xl font-bold text-sm shadow-md transition ${userAnswers.includes(undefined) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white active:bg-green-700'}`}
+                                            className="px-4 py-2.5 rounded-xl font-bold text-sm shadow-md transition bg-green-600 text-white hover:bg-green-700 active:bg-green-800"
                                         >
                                             📝 看結果
                                         </button>
